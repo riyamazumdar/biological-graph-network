@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Disease-Gene-GO-Chemical-Drug Network</title>
+  <script src="https://unpkg.com/cytoscape@3.23.0/dist/cytoscape.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #121212;
+      color: #eee;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    header {
+      padding: 20px;
+      background: #1e1e1e;
+      text-align: center;
+      border-bottom: 2px solid #00bcd4;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 24px;
+      color: #00bcd4;
+    }
+    main {
+      flex: 1;
+      padding: 20px;
+    }
+    textarea, select {
+      width: 100%;
+      padding: 10px;
+      font-size: 16px;
+      background: #2c2c2c;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      margin-top: 10px;
+    }
+    button {
+      margin-top: 10px;
+      padding: 10px 20px;
+      background: #00bcd4;
+      color: black;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .filters {
+      margin-top: 15px;
+      font-size: 14px;
+    }
+    .filters label {
+      margin-right: 20px;
+    }
+    #cy {
+      width: 100%;
+      height: 70vh;
+      margin-top: 20px;
+      background: #222;
+      border-radius: 10px;
+    }
+    .metrics {
+      background: #1e1e1e;
+      padding: 10px;
+      margin-top: 10px;
+      font-family: monospace;
+      color: #00e676;
+      max-height: 250px;
+      overflow-y: auto;
+      border-radius: 6px;
+    }
+    #tooltip {
+      position: absolute;
+      display: none;
+      padding: 10px;
+      background: #333;
+      color: white;
+      border-radius: 5px;
+      font-size: 13px;
+      max-width: 200px;
+      pointer-events: none;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Disease-Gene-GO-Chemical-Drug Network</h1>
+    </header>
+    <main>
+      <label>Select Disease from Dropdown:</label>
+      <select id="diseaseSelect" multiple onchange="updateDiseaseInput()">
+        <option value="Asthma">Asthma</option>
+        <option value="Hypoxia">Hypoxia</option>
+        <option value="COPD">COPD</option>
+      </select>
+      <label>Or manually type diseases (comma-separated):</label>
+      <textarea id="diseaseInput">Asthma, Hypoxia</textarea>
+      <button onclick="generateGraph()">Generate Graph</button>
+
+      <div class="filters">
+        <label><input type="checkbox" checked onchange="toggleVisibility('go')"> Show GO Terms</label>
+        <label><input type="checkbox" checked onchange="toggleVisibility('chemical')"> Show Chemicals</label>
+        <label><input type="checkbox" checked onchange="toggleVisibility('drug')"> Show Drugs</label>
+      </div>
+
+      <div id="cy"></div>
+      <div class="metrics" id="metricsOutput">Metrics will appear here...</div>
+      <div id="tooltip"></div>
+    </main>
+  </div>
+
+  <script>
+    const diseaseGeneAssoc = {
+      "Asthma": ["IL6", "TNF"],
+      "Hypoxia": ["VEGFA", "HIF1A"],
+      "COPD": ["TNF", "EGFR"]
+    };
+
+    const geneGeneAssoc = [
+      ["IL6", "TNF"],
+      ["TNF", "VEGFA"],
+      ["HIF1A", "VEGFA"],
+      ["TP53", "EGFR"]
+    ];
+
+    const geneMetaData = {
+      "IL6": {
+        go: ["GO:0005125", "GO:0006954"],
+        chemicals: ["CS123"],
+        drugs: ["Tocilizumab"]
+      },
+      "TNF": {
+        go: ["GO:0006954", "GO:0006955"],
+        chemicals: ["CS101"],
+        drugs: ["Etanercept", "Infliximab"]
+      },
+      "VEGFA": {
+        go: ["GO:0008284"],
+        chemicals: ["CS205"],
+        drugs: ["Bevacizumab"]
+      },
+      "HIF1A": {
+        go: ["GO:0001666"],
+        chemicals: ["CS303"],
+        drugs: ["Roxadustat"]
+      },
+      "EGFR": {
+        go: ["GO:0005006"],
+        chemicals: ["CS111"],
+        drugs: ["Gefitinib", "Erlotinib"]
+      }
+    };
+
+    let cy;
+    let selectedNodes = [];
+
+    function updateDiseaseInput() {
+      const selected = Array.from(document.getElementById("diseaseSelect").selectedOptions)
+        .map(opt => opt.value);
+      document.getElementById("diseaseInput").value = selected.join(", ");
+    }
+
+    function generateGraph() {
+      const input = document.getElementById("diseaseInput").value;
+      const selected = input.split(",").map(s => s.trim());
+
+      const nodes = [], edges = [], addedGenes = new Set(), addedGO = new Set(), addedChemicals = new Set(), addedDrugs = new Set();
+
+      selected.forEach(d => {
+        if (!diseaseGeneAssoc[d]) return;
+        nodes.push({ data: { id: d, label: d, type: "disease" } });
+
+        diseaseGeneAssoc[d].forEach(g => {
+          if (!addedGenes.has(g)) {
+            nodes.push({ data: { id: g, label: g, type: "gene" } });
+            addedGenes.add(g);
+          }
+          edges.push({ data: { source: d, target: g } });
+
+          const meta = geneMetaData[g];
+          if (!meta) return;
+
+          meta.go.forEach(go => {
+            if (!addedGO.has(go)) {
+              nodes.push({ data: { id: go, label: go, type: "go" } });
+              addedGO.add(go);
+            }
+            edges.push({ data: { source: g, target: go } });
+          });
+
+          meta.chemicals.forEach(chem => {
+            if (!addedChemicals.has(chem)) {
+              nodes.push({ data: { id: chem, label: chem, type: "chemical" } });
+              addedChemicals.add(chem);
+            }
+            edges.push({ data: { source: g, target: chem } });
+          });
+
+          meta.drugs.forEach(drug => {
+            if (!addedDrugs.has(drug)) {
+              nodes.push({ data: { id: drug, label: drug, type: "drug" } });
+              addedDrugs.add(drug);
+            }
+            meta.chemicals.forEach(chem => {
+              edges.push({ data: { source: chem, target: drug } });
+            });
+          });
+        });
+      });
+
+      geneGeneAssoc.forEach(([g1, g2]) => {
+        if (addedGenes.has(g1) && addedGenes.has(g2)) {
+          edges.push({ data: { source: g1, target: g2 } });
+        }
+      });
+
+      if (cy) cy.destroy();
+
+      cy = cytoscape({
+        container: document.getElementById("cy"),
+        elements: [...nodes, ...edges],
+        layout: { name: 'cose', animate: true },
+        style: [
+          {
+            selector: 'node',
+            style: {
+              'label': 'data(label)',
+              'text-valign': 'center',
+              'text-halign': 'center',
+              'font-size': 9,
+              'color': '#fff',
+              'text-wrap': 'wrap',
+              'text-max-width': 90,
+              'width': 40,
+              'height': 40,
+              'shape': ele => {
+                const type = ele.data('type');
+                if (type === 'disease') return 'ellipse';
+                if (type === 'gene') return 'round-rectangle';
+                if (type === 'go') return 'diamond';
+                if (type === 'chemical') return 'hexagon';
+                if (type === 'drug') return 'rectangle';
+                return 'ellipse';
+              },
+              'background-color': ele => {
+                const type = ele.data('type');
+                if (type === 'disease') return '#ff7043';
+                if (type === 'gene') return '#42a5f5';
+                if (type === 'go') return '#ab47bc';
+                if (type === 'chemical') return '#26c6da';
+                if (type === 'drug') return '#66bb6a';
+                return '#ccc';
+              }
+            }
+          },
+          {
+            selector: 'edge',
+            style: {
+              'width': 2,
+              'line-color': '#80cbc4',
+              'curve-style': 'bezier'
+            }
+          },
+          {
+            selector: '.highlighted',
+            style: {
+              'background-color': '#ffd54f',
+              'line-color': '#ffd54f',
+              'width': 4
+            }
+          }
+        ]
+      });
+
+      calculateMetrics();
+      setupShortestPathClick();
+    }
+
+    function calculateMetrics() {
+      let out = "";
+      let metricsMap = {};
+      let tooltip = document.getElementById("tooltip");
+      const N = cy.nodes().length;
+
+      cy.nodes().forEach(n => {
+        const id = n.id();
+        const degree = n.connectedEdges().length;
+        let totalDist = 0;
+
+        cy.nodes().forEach(m => {
+          if (id !== m.id()) {
+            const path = cy.elements().aStar({ root: n, goal: m });
+            totalDist += path.distance || 0;
+          }
+        });
+
+        const closeness = totalDist > 0 ? (N - 1) / totalDist : 0;
+        let betweenness = n.connectedEdges().length;
+
+        const label = `${id}\nDeg:${degree} C:${closeness.toFixed(2)} B:${betweenness}`;
+        n.data("label", label);
+
+        metricsMap[id] = `Degree: ${degree}\nCloseness: ${closeness.toFixed(3)}\nBetweenness: ${betweenness}`;
+        out += `${id} →\n${metricsMap[id]}\n\n`;
+      });
+
+      document.getElementById("metricsOutput").innerText = out;
+
+      cy.on("tap", "node", function(evt) {
+        const node = evt.target;
+        const e = evt.originalEvent;
+        tooltip.innerText = `${node.id()}\n${metricsMap[node.id()]}`;
+        tooltip.style.left = e.pageX + 10 + "px";
+        tooltip.style.top = e.pageY - 10 + "px";
+        tooltip.style.display = "block";
+      });
+
+      cy.on("tap", function(evt) {
+        if (evt.target === cy) tooltip.style.display = "none";
+      });
+    }
+
+    function setupShortestPathClick() {
+      selectedNodes = [];
+      cy.off("tap", "node");
+
+      cy.on("tap", "node", function(evt) {
+        const node = evt.target;
+        if (selectedNodes.length === 2) {
+          cy.elements().removeClass("highlighted");
+          selectedNodes = [];
+        }
+
+        selectedNodes.push(node);
+
+        if (selectedNodes.length === 2) {
+          const path = cy.elements().aStar({
+            root: selectedNodes[0],
+            goal: selectedNodes[1]
+          }).path;
+
+          path.addClass("highlighted");
+        }
+      });
+    }
+
+    function toggleVisibility(type) {
+      cy.nodes().forEach(n => {
+        if (n.data("type") === type) {
+          n.style("display", n.style("display") === "none" ? "element" : "none");
+        }
+      });
+      cy.edges().forEach(e => {
+        const src = e.source().style("display");
+        const tgt = e.target().style("display");
+        e.style("display", src === "none" || tgt === "none" ? "none" : "element");
+      });
+    }
+  </script>
+</body>
+</html>
